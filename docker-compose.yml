@@ -1,0 +1,64 @@
+# Fica na raiz do repositorio da API principal, como manda o enunciado.
+# Sobe os tres servicos e o Postgres com um banco separado por servico.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mvp-postgres
+    environment:
+      POSTGRES_USER: mvp
+      POSTGRES_PASSWORD: mvp
+      POSTGRES_DB: orders_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mvp -d orders_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  inventory-service:
+    build: ${INVENTORY_PATH:-../inventory}
+    container_name: mvp-inventory
+    environment:
+      DATABASE_URL: postgresql+psycopg://mvp:mvp@postgres:5432/inventory_db
+      RESERVATION_TTL_MINUTES: 15
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  delivery-service:
+    build: ${DELIVERY_PATH:-../delivery}
+    container_name: mvp-delivery
+    environment:
+      ORIGIN_CEP: "01310930"
+      ROUTE_FACTOR: 1.3
+    ports:
+      - "8002:8002"
+
+  orders-api:
+    build: .
+    container_name: mvp-orders
+    environment:
+      DATABASE_URL: postgresql+psycopg://mvp:mvp@postgres:5432/orders_db
+      INVENTORY_BASE_URL: http://inventory-service:8001
+      DELIVERY_BASE_URL: http://delivery-service:8002
+      JWT_SECRET: troque-em-producao
+      HTTP_TIMEOUT_SECONDS: 3.0
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+      delivery-service:
+        condition: service_healthy
+
+volumes:
+  pgdata:

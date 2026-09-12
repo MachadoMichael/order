@@ -1,0 +1,37 @@
+flowchart LR
+  U["Cliente<br/>Swagger / curl"]
+
+  subgraph SO["container mvp-orders :8000"]
+    P["orders-api<br/>ORQUESTRADORA<br/>FastAPI · JWT · CRUD"]
+    DB1[("orders_db<br/>clientes · pedidos")]
+  end
+
+  subgraph SI["container mvp-inventory :8001"]
+    I["inventory-service<br/>dono do saldo<br/>reserva · libera · consome"]
+    DB2[("inventory_db<br/>produtos · reservas")]
+  end
+
+  subgraph SD["container mvp-delivery :8002"]
+    D["delivery-service<br/>stateless<br/>Haversine · zonas · frete"]
+  end
+
+  E1["ViaCEP<br/>CEP para endereco"]
+  E2["Nominatim OSM<br/>cidade para lat/lon"]
+
+  U -->|"1 · POST /orders + JWT"| P
+  P -->|"2 · GET /products/sku<br/>3 · POST /reservations · PORTAO"| I
+  P -->|"4 · POST /quotes · so depois do 3"| D
+  P -.->|"6 · DELETE /reservations<br/>COMPENSACAO se 4 falhar"| I
+  P --> DB1
+  I --> DB2
+  D -->|"5 · cache TTL 24h"| E1
+  D -->|"5 · cache TTL 24h"| E2
+
+  classDef mine fill:#b2f2bb,stroke:#2f9e44,stroke-width:2px,color:#1e1e1e
+  classDef orch fill:#ffec99,stroke:#f08c00,stroke-width:3px,color:#1e1e1e
+  classDef db fill:#a5d8ff,stroke:#1971c2,stroke-width:2px,color:#1e1e1e
+  classDef ext fill:#ffd8a8,stroke:#e8590c,stroke-width:2px,color:#1e1e1e
+  class P orch
+  class I,D mine
+  class DB1,DB2 db
+  class E1,E2 ext
