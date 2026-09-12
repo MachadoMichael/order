@@ -11,9 +11,9 @@ Este é o **módulo principal** do MVP. Os outros dois estão em repositórios s
 
 | Módulo | Repositório | Porta |
 |---|---|---|
-| **orders-api** (este) | https://github.com/SEU-USUARIO/orders-api | 8000 |
-| inventory-service | https://github.com/SEU-USUARIO/inventory-service | 8001 |
-| delivery-service | https://github.com/SEU-USUARIO/delivery-service | 8002 |
+| **orders-api** (este) | https://github.com/MachadoMichael/order | 8000 |
+| inventory-service | https://github.com/MachadoMichael/inventory | 8001 |
+| delivery-service | https://github.com/MachadoMichael/delivery | 8002 |
 
 ---
 
@@ -113,9 +113,9 @@ isso ele precisa do código das duas secundárias, então clone os três reposit
 
 ```bash
 mkdir mvp && cd mvp
-git clone https://github.com/SEU-USUARIO/orders-api.git        order
-git clone https://github.com/SEU-USUARIO/inventory-service.git inventory
-git clone https://github.com/SEU-USUARIO/delivery-service.git  delivery
+git clone https://github.com/MachadoMichael/order.git      order
+git clone https://github.com/MachadoMichael/inventory.git  inventory
+git clone https://github.com/MachadoMichael/delivery.git   delivery
 ```
 
 A estrutura esperada é esta:
