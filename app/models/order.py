@@ -16,7 +16,6 @@ class Order(TimestampMixin, table=True):
     __tablename__ = "orders"
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    customer_id: UUID = Field(foreign_key="customers.id", index=True)
     status: OrderStatus = Field(default=OrderStatus.PENDING, index=True)
 
     delivery_cep: str = Field(max_length=8)
@@ -49,12 +48,15 @@ class OrderLineIn(SQLModel):
 
 
 class OrderCreate(SQLModel):
-    customer_id: UUID
-    items: list[OrderLineIn] = Field(min_length=1)
-    delivery_cep: str | None = Field(
+    id: UUID | None = Field(
         default=None,
+        description="Opcional. Informado pelo cliente, torna o POST idempotente: "
+        "repetir o mesmo id devolve o pedido existente.",
+    )
+    items: list[OrderLineIn] = Field(min_length=1)
+    delivery_cep: str = Field(
         max_length=8,
-        description="Omitido, usa o CEP cadastrado do cliente.",
+        description="CEP de destino da entrega.",
         schema_extra={"examples": ["30140071"]},
     )
 
@@ -65,7 +67,6 @@ class DeliveryUpdate(SQLModel):
 
 class OrderPublic(SQLModel):
     id: UUID
-    customer_id: UUID
     status: OrderStatus
     delivery_cep: str
     subtotal: Decimal

@@ -1,0 +1,46 @@
+%% Fonte de docs/arquitetura.png
+%% npx -y @mermaid-js/mermaid-cli -i docs/arquitetura.mmd -o docs/arquitetura.png -w 2000 -s 2 -b white
+flowchart LR
+  C["Cliente / Swagger UI"]
+
+  subgraph SO["Container orders-api :8000"]
+    P["API Principal (FastAPI)<br/>Pedidos - Orquestracao"]
+  end
+
+  subgraph SI["Container inventory-service :8001"]
+    I["Estoque (FastAPI)<br/>saldo - reserva -<br/>compensacao"]
+  end
+
+  subgraph SD["Container delivery-service :8002"]
+    D["Entrega (FastAPI)<br/>distancia - frete - prazo<br/>stateless"]
+  end
+
+  subgraph PG["Container postgres :5432"]
+    DB1[("orders_db")]
+    DB2[("inventory_db")]
+  end
+
+  V["ViaCEP<br/>CEP para endereco"]
+  N["Nominatim / OSM<br/>endereco para lat-lon"]
+
+  C -->|"REST"| P
+  P -->|"1. POST /reservations<br/>timeout 3s - retry - breaker"| I
+  P -->|"2. POST /quotes"| D
+  P -.->|"3. DELETE /reservations<br/>COMPENSACAO se 2 falhar"| I
+  P -->|"SQLAlchemy"| DB1
+  I -->|"SQLAlchemy"| DB2
+  D -->|"REST + cache TTL 24h"| V
+  D -->|"REST + cache TTL 24h"| N
+
+  classDef svc fill:#e2f1ec,stroke:#1f6f5c,stroke-width:2px,color:#111
+  classDef ext fill:#f8ebdc,stroke:#b45a12,stroke-width:2px,color:#111
+  classDef client fill:#eeeeee,stroke:#9a9a9a,color:#111
+  classDef db fill:#e8ecf8,stroke:#2c3e8f,stroke-width:2px,color:#111
+  class P,I,D svc
+  class V,N ext
+  class C client
+  class DB1,DB2 db
+  style SO fill:#fafafa,stroke:#9a9a9a
+  style SI fill:#fafafa,stroke:#9a9a9a
+  style SD fill:#fafafa,stroke:#9a9a9a
+  style PG fill:#fafafa,stroke:#9a9a9a

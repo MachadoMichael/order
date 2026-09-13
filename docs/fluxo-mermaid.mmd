@@ -2,8 +2,8 @@ flowchart LR
   U["Cliente<br/>Swagger / curl"]
 
   subgraph SO["container mvp-orders :8000"]
-    P["orders-api<br/>ORQUESTRADORA<br/>FastAPI · JWT · CRUD"]
-    DB1[("orders_db<br/>clientes · pedidos")]
+    P["orders-api<br/>ORQUESTRADORA<br/>FastAPI · pedidos"]
+    DB1[("orders_db<br/>pedidos")]
   end
 
   subgraph SI["container mvp-inventory :8001"]
@@ -18,7 +18,7 @@ flowchart LR
   E1["ViaCEP<br/>CEP para endereco"]
   E2["Nominatim OSM<br/>cidade para lat/lon"]
 
-  U -->|"1 · POST /orders + JWT"| P
+  U -->|"1 · POST /orders (itens + CEP)"| P
   P -->|"2 · GET /products/sku<br/>3 · POST /reservations · PORTAO"| I
   P -->|"4 · POST /quotes · so depois do 3"| D
   P -.->|"6 · DELETE /reservations<br/>COMPENSACAO se 4 falhar"| I

@@ -7,8 +7,3 @@ class OrderStatus(str, enum.Enum):
     REJECTED_NO_STOCK = "REJECTED_NO_STOCK"  # o estoque negou
     REJECTED_DELIVERY = "REJECTED_DELIVERY"  # a cotacao falhou, reserva compensada
     CANCELLED = "CANCELLED"                  # cancelado, reserva liberada
-
-
-class UserRole(str, enum.Enum):
-    ADMIN = "ADMIN"
-    OPERATOR = "OPERATOR"

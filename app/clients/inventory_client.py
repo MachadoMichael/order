@@ -41,14 +41,13 @@ def get_product(sku: str) -> ProductSnapshot:
     )
 
 
-def reserve(*, order_id: UUID, requested_by: UUID, lines: list[OrderLineIn]) -> UUID:
+def reserve(*, order_id: UUID, lines: list[OrderLineIn]) -> UUID:
     """Reserva o saldo. Devolve o id da reserva ou levanta OutOfStock."""
     response = client.request(
         "POST",
         "/reservations",
         json={
             "order_id": str(order_id),
-            "requested_by": str(requested_by),
             "items": [{"sku": line.sku, "quantity": line.quantity} for line in lines],
         },
     )
@@ -94,7 +93,3 @@ def release(reservation_id: UUID, reason: str = "COMPENSATION") -> bool:
     log_event(logger, "reserva liberada" if ok else "compensacao recusada",
               reservation_id=str(reservation_id), status=response.status_code)
     return ok
-
-
-def health() -> dict:
-    return client.health()

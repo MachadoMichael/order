@@ -7,15 +7,14 @@ from uuid import UUID
 from sqlmodel import Session
 
 from app.core.exceptions import (
-    CustomerNotFound,
     InvalidOrderState,
     OrderNotFound,
     OutOfStock,
     ServiceUnavailable,
 )
 from app.core.logging import log_event
-from app.models import Customer, Order, OrderItem, OrderLineIn, OrderStatus
-from app.repositories import CustomerRepository, OrderRepository
+from app.models import Order, OrderItem, OrderLineIn, OrderStatus
+from app.repositories import OrderRepository
 from app.clients import delivery_client, inventory_client
 from app.clients.inventory_client import ProductSnapshot
 
@@ -35,21 +34,30 @@ class OrderOrchestrator:
     def __init__(self, session: Session) -> None:
         self.session = session
         self.orders = OrderRepository(session)
-        self.customers = CustomerRepository(session)
 
     def create(
         self,
         *,
-        customer_id: UUID,
         lines: Sequence[OrderLineIn],
-        requested_by: UUID,
-        delivery_cep: str | None = None,
-    ) -> Order:
-        customer = self._customer(customer_id)
+        delivery_cep: str,
+        order_id: UUID | None = None,
+    ) -> tuple[Order, bool]:
+        """Devolve o pedido e se ele foi criado agora.
+
+        Com `order_id` informado, repetir a chamada devolve o pedido existente
+        sem reservar estoque nem cotar frete de novo.
+        """
+        if order_id is not None:
+            existing = self.orders.get(order_id)
+            if existing is not None:
+                return existing, False
+
         merged = self._merge(lines)
         catalog = {sku: inventory_client.get_product(sku) for sku in merged}
 
-        order = self._build_order(customer, merged, catalog, delivery_cep)
+        order = self._build_order(merged, catalog, delivery_cep)
+        if order_id is not None:
+            order.id = order_id
         self.orders.add(order)
         self.session.commit()
         self.session.refresh(order)
@@ -58,7 +66,6 @@ class OrderOrchestrator:
         try:
             reservation_id = inventory_client.reserve(
                 order_id=order.id,
-                requested_by=requested_by,
                 lines=[OrderLineIn(sku=s, quantity=q) for s, q in merged.items()],
             )
         except OutOfStock as exc:
@@ -93,7 +100,7 @@ class OrderOrchestrator:
 
         log_event(logger, "pedido confirmado", order_id=str(order.id),
                   total=str(order.total), freight=str(order.freight))
-        return order
+        return order, True
 
     def get(self, order_id: UUID) -> Order:
         order = self.orders.get(order_id)
@@ -135,12 +142,6 @@ class OrderOrchestrator:
 
     # --------------------------------------------------------------- internos
 
-    def _customer(self, customer_id: UUID) -> Customer:
-        customer = self.customers.get(customer_id)
-        if customer is None:
-            raise CustomerNotFound(customer_id)
-        return customer
-
     @staticmethod
     def _merge(lines: Sequence[OrderLineIn]) -> dict[str, int]:
         merged: dict[str, int] = defaultdict(int)
@@ -150,16 +151,11 @@ class OrderOrchestrator:
 
     def _build_order(
         self,
-        customer: Customer,
         merged: dict[str, int],
         catalog: dict[str, ProductSnapshot],
-        delivery_cep: str | None,
+        delivery_cep: str,
     ) -> Order:
-        order = Order(
-            customer_id=customer.id,
-            delivery_cep=(delivery_cep or customer.cep),
-            status=OrderStatus.PENDING,
-        )
+        order = Order(delivery_cep=delivery_cep, status=OrderStatus.PENDING)
         subtotal = Decimal("0")
         weight = Decimal("0")
 

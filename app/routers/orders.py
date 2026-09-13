@@ -1,52 +1,54 @@
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Path, Query, status
+from fastapi import APIRouter, Body, Path, Query, Response, status
 
 from app.core.responses import ErrorResponse, Page
 from app.models import DeliveryUpdate, OrderCreate, OrderPublic, OrderStatus
 from app.repositories import OrderRepository
-from app.routers.deps import CurrentUser, OrchestratorDep, SessionDep
+from app.routers.deps import OrchestratorDep, SessionDep
 
 router = APIRouter(prefix="/orders", tags=["pedidos"])
 
-OrderPath = Path(description="Identificador do pedido")
+# Ids fixos nos exemplos: no Swagger cada rota ja abre pronta para o Execute, e o
+# PUT e o DELETE apontam para o pedido criado pelo primeiro exemplo do POST.
+DEMO_ORDER_ID = "11111111-1111-1111-1111-111111111111"
+
+ORDER_EXAMPLES = {
+    "confirmado": {
+        "summary": "Pedido com estoque (201 CONFIRMED)",
+        "value": {
+            "id": DEMO_ORDER_ID,
+            "delivery_cep": "30140071",
+            "items": [{"sku": "SKU-1042", "quantity": 2}, {"sku": "SKU-1088", "quantity": 1}],
+        },
+    },
+    "sem_estoque": {
+        "summary": "Sem estoque (409 OUT_OF_STOCK)",
+        "value": {
+            "id": "22222222-2222-2222-2222-222222222222",
+            "delivery_cep": "30140071",
+            "items": [{"sku": "SKU-2071", "quantity": 99}],
+        },
+    },
+    "compensacao": {
+        "summary": "Com o delivery parado (503 e compensacao)",
+        "value": {
+            "id": "33333333-3333-3333-3333-333333333333",
+            "delivery_cep": "30140071",
+            "items": [{"sku": "SKU-1042", "quantity": 10}],
+        },
+    },
+}
+
+OrderPath = Path(
+    description="Identificador do pedido",
+    openapi_examples={
+        "confirmado": {"summary": "Pedido criado pelo exemplo 'confirmado'", "value": DEMO_ORDER_ID}
+    },
+)
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "Pedido inexistente"}}
-
-
-@router.get("", response_model=Page[OrderPublic], summary="Lista pedidos")
-def list_orders(
-    session: SessionDep,
-    user: CurrentUser,
-    status_filter: OrderStatus | None = Query(None, alias="status"),
-    customer_id: UUID | None = Query(None),
-    created_from: datetime | None = Query(None),
-    created_to: datetime | None = Query(None),
-    sort: Literal["created_at", "total", "status"] = "created_at",
-    order: Literal["asc", "desc"] = "desc",
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-) -> Page[OrderPublic]:
-    repo = OrderRepository(session)
-    filters = dict(
-        status=status_filter, customer_id=customer_id,
-        created_from=created_from, created_to=created_to,
-    )
-    items = repo.list(**filters, sort=sort, descending=(order == "desc"),
-                      limit=limit, offset=offset)
-    return Page[OrderPublic](
-        items=[OrderPublic.model_validate(o) for o in items],
-        total=repo.count(**filters), limit=limit, offset=offset,
-    )
-
-
-@router.get("/{order_id}", response_model=OrderPublic, summary="Detalha um pedido",
-            responses=NOT_FOUND)
-def get_order(
-    service: OrchestratorDep, user: CurrentUser, order_id: UUID = OrderPath
-) -> OrderPublic:
-    return OrderPublic.model_validate(service.get(order_id))
 
 
 @router.post(
@@ -62,24 +64,52 @@ def get_order(
         "3. **Cotiza o frete** no delivery-service\n"
         "4. Se a cotacao falhar, **libera a reserva** e devolve 503\n\n"
         "O passo 4 e uma transacao compensatoria: nao ha rollback distribuido "
-        "entre dois bancos, ha compensacao explicita."
+        "entre dois bancos, ha compensacao explicita.\n\n"
+        "**Idempotente por `id`:** repetir o mesmo id devolve o pedido existente "
+        "com status 200, sem reservar de novo."
     ),
     responses={
-        404: {"model": ErrorResponse, "description": "Cliente ou SKU inexistente"},
+        200: {"model": OrderPublic, "description": "Pedido ja existia para este id"},
+        404: {"model": ErrorResponse, "description": "SKU inexistente"},
         409: {"model": ErrorResponse, "description": "Estoque insuficiente, com a lista de faltas"},
         503: {"model": ErrorResponse, "description": "Estoque ou entrega fora do ar (reserva compensada)"},
     },
 )
 def create_order(
-    payload: OrderCreate, service: OrchestratorDep, user: CurrentUser
+    payload: Annotated[OrderCreate, Body(openapi_examples=ORDER_EXAMPLES)],
+    service: OrchestratorDep,
+    response: Response,
 ) -> OrderPublic:
-    order = service.create(
-        customer_id=payload.customer_id,
-        lines=payload.items,
-        requested_by=user.id,
-        delivery_cep=payload.delivery_cep,
+    order, created = service.create(
+        order_id=payload.id, lines=payload.items, delivery_cep=payload.delivery_cep
     )
+    if not created:
+        response.status_code = status.HTTP_200_OK
     return OrderPublic.model_validate(order)
+
+
+@router.get("", response_model=Page[OrderPublic], summary="Lista pedidos")
+def list_orders(
+    session: SessionDep,
+    status_filter: OrderStatus | None = Query(
+        None, alias="status",
+        openapi_examples={"confirmados": {"summary": "So os confirmados", "value": "CONFIRMED"}},
+    ),
+    created_from: datetime | None = Query(None),
+    created_to: datetime | None = Query(None),
+    sort: Literal["created_at", "total", "status"] = "created_at",
+    order: Literal["asc", "desc"] = "desc",
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> Page[OrderPublic]:
+    repo = OrderRepository(session)
+    filters = dict(status=status_filter, created_from=created_from, created_to=created_to)
+    items = repo.list(**filters, sort=sort, descending=(order == "desc"),
+                      limit=limit, offset=offset)
+    return Page[OrderPublic](
+        items=[OrderPublic.model_validate(o) for o in items],
+        total=repo.count(**filters), limit=limit, offset=offset,
+    )
 
 
 @router.put(
@@ -94,9 +124,13 @@ def create_order(
     },
 )
 def change_delivery(
-    payload: DeliveryUpdate,
+    payload: Annotated[
+        DeliveryUpdate,
+        Body(openapi_examples={
+            "campinas": {"summary": "Troca para Campinas (zona REGIONAL)", "value": {"delivery_cep": "13015100"}}
+        }),
+    ],
     service: OrchestratorDep,
-    user: CurrentUser,
     order_id: UUID = OrderPath,
 ) -> OrderPublic:
     return OrderPublic.model_validate(
@@ -112,7 +146,5 @@ def change_delivery(
     responses={**NOT_FOUND,
                409: {"model": ErrorResponse, "description": "Pedido nao pode ser cancelado"}},
 )
-def cancel_order(
-    service: OrchestratorDep, user: CurrentUser, order_id: UUID = OrderPath
-) -> OrderPublic:
+def cancel_order(service: OrchestratorDep, order_id: UUID = OrderPath) -> OrderPublic:
     return OrderPublic.model_validate(service.cancel(order_id))

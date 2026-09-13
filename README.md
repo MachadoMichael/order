@@ -1,8 +1,9 @@
 # orders-api — API principal
 
-API de **pedidos** de uma loja. É a única porta de entrada do cliente e não é dona
-nem do estoque nem do cálculo de frete: ela **orquestra** dois serviços autônomos
-que sabem fazer isso e devolve ao cliente uma resposta única e consolidada.
+API de **pedidos** de uma loja. Recebe os itens e o CEP de entrega, **reserva o
+estoque** e **calcula o frete sugerido**. Não é dona nem do estoque nem do cálculo de
+frete: ela **orquestra** dois serviços autônomos que sabem fazer isso e devolve uma
+resposta única e consolidada.
 
 O problema que resolve: registrar um pedido sem vender o que não existe e sem
 prometer um frete que nunca foi calculado.
@@ -26,8 +27,8 @@ dono dos seus dados: **o pedido nunca dá `JOIN` no estoque, ele pergunta por HT
 
 | Componente | Papel | Responsabilidade exclusiva |
 |---|---|---|
-| `orders-api` | Principal | Autentica, valida, orquestra, persiste o pedido e responde |
-| `inventory-service` | Secundária | Dono do saldo: reserva, libera e consome estoque |
+| `orders-api` | Principal | Valida, orquestra, persiste o pedido e responde |
+| `inventory-service` | Secundária | Dono do saldo: reserva e libera estoque |
 | `delivery-service` | Secundária | Stateless: distância, frete e prazo |
 | ViaCEP | Externa | CEP → logradouro, município, UF |
 | Nominatim | Externa | Município → latitude e longitude |
@@ -50,7 +51,7 @@ então não existe *rollback* distribuído — existe compensação explícita.
 |---|---|
 | Orquestração com portão | A entrega só é chamada se o estoque aprovar. Falhar cedo evita trabalho inútil |
 | Transação compensatória | Cotação falhou → `DELETE /reservations/{id}` devolve o saldo |
-| Idempotência | `POST /reservations` é único por `order_id`: o retry não reserva duas vezes |
+| Idempotência | `POST /orders` aceita o `id` do pedido e `POST /reservations` é único por `order_id`: repetir não duplica o pedido nem reserva duas vezes |
 | Timeout e retry | 3s por chamada, 1 retry com backoff — **apenas** em falha de transporte ou 5xx |
 | Circuit breaker | 3 falhas seguidas abrem o circuito por 20s, por dependência |
 | Rastreabilidade | `X-Correlation-ID` gerado aqui e propagado aos dois serviços |
@@ -76,7 +77,6 @@ chave de API.
 |---|---|---|
 | ViaCEP | `GET /ws/{cep}/json/` | Logradouro, bairro, município e UF |
 | Nominatim | `GET /search?city=&state=&country=Brazil&format=jsonv2` | Latitude e longitude do município |
-| Nominatim | `GET /status.php?format=json` | Health check |
 
 ### Os dados externos são tratados, nunca repassados
 
@@ -142,20 +142,25 @@ cd order
 docker compose up --build
 ```
 
-Na primeira execução o banco é criado e populado automaticamente com um catálogo
-de 8 produtos, 3 clientes e um usuário administrador.
+Na primeira execução os bancos são criados e o catálogo do estoque é populado
+automaticamente com 8 produtos.
 
 ### Acessos
 
-| Serviço | Swagger | Health |
-|---|---|---|
-| orders-api | http://localhost:8000/docs | http://localhost:8000/health |
-| inventory-service | http://localhost:8001/docs | http://localhost:8001/health |
-| delivery-service | http://localhost:8002/docs | http://localhost:8002/health |
+| Serviço | Swagger |
+|---|---|
+| orders-api | http://localhost:8000/docs |
+| inventory-service | http://localhost:8001/docs |
+| delivery-service | http://localhost:8002/docs |
 
-**Credenciais do seed:** `admin@loja.com` / `admin123`
+Os três Swaggers abrem com o **Try it out já ligado** e com todos os corpos e
+parâmetros preenchidos: é só clicar **Execute**, na ordem em que as rotas aparecem.
+No `POST /orders`, o seletor **Examples** troca entre o pedido confirmado, o pedido
+sem estoque e o pedido da compensação.
 
-No Swagger, clique em **Authorize** e informe esse email no campo `username`.
+Os exemplos usam ids fixos — o `PUT` e o `DELETE` já apontam para o pedido criado
+pelo primeiro exemplo. Para repetir a demonstração do zero, recrie o banco com
+`docker compose down -v && docker compose up --build`.
 
 ### Parar
 
@@ -181,42 +186,28 @@ docker compose down -v && docker compose up --build
 
 ## Rotas
 
-Todas as rotas exigem `Authorization: Bearer <token>`, exceto `/health`,
-`/auth/register` e `/auth/login`.
-
-### Autenticação
-
 | Método | Rota | Descrição |
 |---|---|---|
-| `POST` | `/auth/register` | Cria um usuário |
-| `POST` | `/auth/login` | Devolve o JWT |
-| `GET` | `/auth/me` | Usuário do token atual |
-
-### Clientes
-
-| Método | Rota | Descrição |
-|---|---|---|
-| `GET` | `/customers` | Lista paginada, com `?state=`, `?search=`, `?sort=`, `?order=` |
-| `GET` | `/customers/{id}` | Detalha um cliente |
-| `POST` | `/customers` | Cadastra um cliente |
-| `PUT` | `/customers/{id}` | Atualiza um cliente |
-| `DELETE` | `/customers/{id}` | Remove um cliente |
-
-### Pedidos
-
-| Método | Rota | Descrição |
-|---|---|---|
-| `GET` | `/orders` | Lista paginada, com `?status=`, `?customer_id=`, `?created_from=`, `?created_to=` |
-| `GET` | `/orders/{id}` | Detalha um pedido |
-| `POST` | `/orders` | **Orquestra estoque e entrega** |
-| `PUT` | `/orders/{id}/delivery` | Troca o CEP e recotiza o frete |
+| `GET` | `/orders` | Lista paginada, com `?status=`, `?created_from=`, `?created_to=`, `?sort=`, `?order=` |
+| `POST` | `/orders` | **Reserva o estoque e calcula o frete.** Idempotente pelo `id` opcional |
+| `PUT` | `/orders/{id}/delivery` | Troca o CEP e recalcula o frete |
 | `DELETE` | `/orders/{id}` | Cancela e devolve o saldo ao estoque |
 
-### Infra
+Corpo do `POST /orders`:
 
-| Método | Rota | Descrição |
-|---|---|---|
-| `GET` | `/health` | Serviço, banco e estado do circuit breaker de cada dependência |
+```json
+{
+  "id": "11111111-1111-1111-1111-111111111111",
+  "delivery_cep": "30140071",
+  "items": [
+    { "sku": "SKU-1042", "quantity": 2 },
+    { "sku": "SKU-1088", "quantity": 1 }
+  ]
+}
+```
+
+O `id` é opcional. Omitido, o servidor gera um; informado, repetir a chamada devolve
+o pedido existente com `200` em vez de criar outro.
 
 ### Estados do pedido
 
@@ -235,9 +226,9 @@ Toda falha devolve JSON com código estável, nunca *stacktrace*:
 ```json
 {
   "code": "OUT_OF_STOCK",
-  "message": "estoque insuficiente: SKU-2071 (pedido 99, disponivel 7)",
+  "message": "estoque insuficiente: SKU-2071 (pedido 99, disponivel 8)",
   "details": [
-    { "sku": "SKU-2071", "requested": 99, "available": 7 },
+    { "sku": "SKU-2071", "requested": 99, "available": 8 },
     { "order_id": "54b6be30-...", "status": "REJECTED_NO_STOCK" }
   ]
 }
@@ -245,12 +236,10 @@ Toda falha devolve JSON com código estável, nunca *stacktrace*:
 
 | Código | HTTP | Quando |
 |---|---|---|
-| `INVALID_CREDENTIALS` | 401 | Email ou senha errados |
-| `CUSTOMER_NOT_FOUND` / `ORDER_NOT_FOUND` | 404 | Recurso inexistente |
+| `ORDER_NOT_FOUND` | 404 | Pedido inexistente |
 | `PRODUCT_UNAVAILABLE` | 404 | SKU fora do catálogo |
 | `OUT_OF_STOCK` | 409 | Saldo insuficiente, com a lista de faltas |
 | `INVALID_ORDER_STATE` | 409 | Operação incompatível com o status |
-| `EMAIL_ALREADY_USED` | 409 | Email já cadastrado |
 | `DEPENDENCY_UNAVAILABLE` | 503 | Estoque ou entrega fora do ar |
 
 ---
@@ -258,32 +247,21 @@ Toda falha devolve JSON com código estável, nunca *stacktrace*:
 ## Testando o fluxo completo
 
 ```bash
-# 1. Login
-TOKEN=$(curl -s -X POST localhost:8000/auth/login \
-  -d 'username=admin@loja.com&password=admin123' | jq -r .access_token)
-
-# 2. Pegue um cliente do seed
-CID=$(curl -s localhost:8000/customers -H "Authorization: Bearer $TOKEN" \
-  | jq -r '.items[0].id')
-
-# 3. Pedido feliz
-curl -X POST localhost:8000/orders -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d "{\"customer_id\":\"$CID\",\"items\":[{\"sku\":\"SKU-1042\",\"quantity\":2}]}"
+# 1. Pedido feliz
+curl -X POST localhost:8000/orders -H 'Content-Type: application/json' \
+  -d '{"delivery_cep":"30140071","items":[{"sku":"SKU-1042","quantity":2}]}'
 #   -> 201 CONFIRMED, com reservation_id, frete e prazo
 
-# 4. O portão do estoque
-curl -X POST localhost:8000/orders -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d "{\"customer_id\":\"$CID\",\"items\":[{\"sku\":\"SKU-2071\",\"quantity\":9999}]}"
+# 2. O portão do estoque
+curl -X POST localhost:8000/orders -H 'Content-Type: application/json' \
+  -d '{"delivery_cep":"30140071","items":[{"sku":"SKU-2071","quantity":9999}]}'
 #   -> 409 OUT_OF_STOCK, e a entrega nunca foi chamada
 
-# 5. A COMPENSAÇÃO
+# 3. A COMPENSAÇÃO
 curl -s localhost:8001/products/SKU-1042 | jq .quantity_available   # anote
 docker compose stop delivery-service
-curl -X POST localhost:8000/orders -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d "{\"customer_id\":\"$CID\",\"items\":[{\"sku\":\"SKU-1042\",\"quantity\":10}]}"
+curl -X POST localhost:8000/orders -H 'Content-Type: application/json' \
+  -d '{"delivery_cep":"30140071","items":[{"sku":"SKU-1042","quantity":10}]}'
 #   -> 503 tratado, pedido em REJECTED_DELIVERY
 curl -s localhost:8001/products/SKU-1042 | jq .quantity_available   # idêntico
 #   -> a reserva foi criada e depois liberada: o saldo voltou
@@ -301,8 +279,6 @@ Veja `.env.example`. Todas têm padrão sensato no `docker-compose.yml`.
 | `DATABASE_URL` | `postgresql+psycopg://mvp:mvp@postgres:5432/orders_db` | Conexão com o banco |
 | `INVENTORY_BASE_URL` | `http://inventory-service:8001` | Onde está o estoque |
 | `DELIVERY_BASE_URL` | `http://delivery-service:8002` | Onde está a entrega |
-| `JWT_SECRET` | `troque-em-producao` | Assinatura do token |
-| `JWT_EXPIRE_MINUTES` | `60` | Validade do token |
 | `HTTP_TIMEOUT_SECONDS` | `3.0` | Timeout das chamadas entre serviços |
 | `HTTP_MAX_ATTEMPTS` | `2` | 1 tentativa + 1 retry |
 | `BREAKER_FAILURE_THRESHOLD` | `3` | Falhas seguidas para abrir o circuito |
@@ -316,20 +292,19 @@ Veja `.env.example`. Todas têm padrão sensato no `docker-compose.yml`.
 order/
 ├── docker-compose.yml        sobe os 3 serviços + Postgres
 ├── Dockerfile
-├── docker/init-db.sql        cria orders_db e inventory_db
+├── docker/init-db.sql        cria o inventory_db (o orders_db vem do container)
 ├── docs/                     diagramas
 └── app/
     ├── main.py
     ├── database.py           engine, sessão e criação do schema
-    ├── seed.py               usuário admin e clientes iniciais
-    ├── core/                 config, security (JWT), correlation, logging,
-    │                         http_client (retry + breaker), exceptions,
+    ├── core/                 config, correlation, logging, http_client
+    │                         (retry + breaker), exceptions, error_handlers,
     │                         responses (Page[T], ErrorResponse)
-    ├── models/               User, Customer, Order, OrderItem
+    ├── models/               Order, OrderItem
     ├── repositories/         acesso a dados: paginação, filtros, ordenação
     ├── clients/              adaptadores HTTP para o estoque e a entrega
-    ├── services/             regra de negócio: orchestrator, auth, clientes
-    └── routers/              auth, customers, orders, health
+    ├── services/             regra de negócio: order_orchestrator
+    └── routers/              orders
 ```
 
 `clients/` guarda os adaptadores para **outros serviços**; `services/` fica só com
@@ -337,11 +312,9 @@ regra de negócio deste serviço. A mesma separação existe no `delivery`, onde
 `clients/` fala com ViaCEP e Nominatim.
 
 Cada arquivo de `models/` traz a tabela **e** o contrato HTTP correspondente —
-`CustomerBase`, `Customer` (a tabela), `CustomerCreate`, `CustomerPublic`. É o
-padrão do SQLModel: um campo declarado uma vez só, servindo de ORM, validação e
-schema do Swagger. Não existe pasta `schemas/` separada porque ela reintroduziria
-a duplicação que o SQLModel existe para eliminar.
+`Order` (a tabela), `OrderCreate` e `OrderPublic`. Não existe pasta `schemas/`
+separada: o SQLModel serve de ORM, validação e schema do Swagger ao mesmo tempo.
 
 ## Stack
 
-Python 3.12 · FastAPI · SQLModel · PostgreSQL 16 · httpx · PyJWT · bcrypt · Docker
+Python 3.12 · FastAPI · SQLModel · PostgreSQL 16 · httpx · Docker

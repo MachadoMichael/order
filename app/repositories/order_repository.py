@@ -26,7 +26,6 @@ class OrderRepository:
         self,
         *,
         status: OrderStatus | None = None,
-        customer_id: UUID | None = None,
         created_from: datetime | None = None,
         created_to: datetime | None = None,
         sort: str = "created_at",
@@ -38,7 +37,7 @@ class OrderRepository:
         order = col(column).desc() if descending else col(column).asc()
         stmt = (
             select(Order)
-            .where(*self._filters(status, customer_id, created_from, created_to))
+            .where(*self._filters(status, created_from, created_to))
             .order_by(order)
             .limit(limit)
             .offset(offset)
@@ -49,14 +48,13 @@ class OrderRepository:
         self,
         *,
         status: OrderStatus | None = None,
-        customer_id: UUID | None = None,
         created_from: datetime | None = None,
         created_to: datetime | None = None,
     ) -> int:
         stmt = (
             select(func.count())
             .select_from(Order)
-            .where(*self._filters(status, customer_id, created_from, created_to))
+            .where(*self._filters(status, created_from, created_to))
         )
         return self.session.exec(stmt).one()
 
@@ -67,15 +65,12 @@ class OrderRepository:
     @staticmethod
     def _filters(
         status: OrderStatus | None,
-        customer_id: UUID | None,
         created_from: datetime | None,
         created_to: datetime | None,
     ) -> list[ColumnElement[bool]]:
         clauses: list[ColumnElement[bool]] = []
         if status:
             clauses.append(Order.status == status)
-        if customer_id:
-            clauses.append(Order.customer_id == customer_id)
         if created_from:
             clauses.append(Order.created_at >= created_from)
         if created_to:

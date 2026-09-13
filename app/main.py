@@ -1,20 +1,15 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from sqlmodel import Session
 
 from app.core.correlation import CorrelationIdMiddleware
 from app.core.error_handlers import register_error_handlers
 from app.core.logging import configure_logging
-from app.seed import seed
-from app.database import engine, init_db
-from app.routers import auth_router, customers_router, health_router, orders_router
+from app.database import init_db
+from app.routers import orders_router
 
 TAGS = [
-    {"name": "autenticacao", "description": "Registro e login. Todas as demais rotas exigem o JWT."},
-    {"name": "clientes", "description": "Cadastro de clientes, com paginacao, filtro e ordenacao."},
     {"name": "pedidos", "description": "Onde a orquestracao acontece: estoque, entrega e compensacao."},
-    {"name": "infra", "description": "Liveness do servico, do banco e das duas dependencias."},
 ]
 
 DESCRIPTION = """
@@ -47,10 +42,6 @@ os dois servicos, aparecendo nos logs dos tres containers.
 async def lifespan(app: FastAPI):
     configure_logging()
     init_db()
-    with Session(engine) as session:
-        criados = seed(session)
-        if any(criados.values()):
-            print(f"[seed] {criados}")
     yield
 
 
@@ -60,11 +51,14 @@ app = FastAPI(
     version="0.1.0",
     openapi_tags=TAGS,
     lifespan=lifespan,
+    # Swagger pronto para demonstracao: Try it out ja ligado e exemplos preenchidos.
+    swagger_ui_parameters={
+        "tryItOutEnabled": True,
+        "displayRequestDuration": True,
+        "defaultModelsExpandDepth": -1,
+    },
 )
 
 app.add_middleware(CorrelationIdMiddleware)
 register_error_handlers(app)
-app.include_router(health_router)
-app.include_router(auth_router)
-app.include_router(customers_router)
 app.include_router(orders_router)

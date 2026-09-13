@@ -44,7 +44,3 @@ def quote(*, destination_cep: str, weight_kg: Decimal) -> QuoteSnapshot:
         delivery_days=body["delivery_days"],
         zone=body["zone"],
     )
-
-
-def health() -> dict:
-    return client.health()

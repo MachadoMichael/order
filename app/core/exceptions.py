@@ -6,12 +6,6 @@ class OrdersError(Exception):
     """Base dos erros de dominio da API principal."""
 
 
-class CustomerNotFound(OrdersError):
-    def __init__(self, customer_id):
-        self.customer_id = customer_id
-        super().__init__(f"cliente nao encontrado: {customer_id}")
-
-
 class OrderNotFound(OrdersError):
     def __init__(self, order_id):
         self.order_id = order_id
@@ -60,14 +54,3 @@ class ServiceUnavailable(OrdersError):
 class CircuitOpen(ServiceUnavailable):
     def __init__(self, service: str):
         super().__init__(service, "circuito aberto apos falhas consecutivas")
-
-
-class InvalidCredentials(OrdersError):
-    def __init__(self) -> None:
-        super().__init__("email ou senha invalidos")
-
-
-class EmailAlreadyUsed(OrdersError):
-    def __init__(self, email: str):
-        self.email = email
-        super().__init__(f"email ja cadastrado: {email}")

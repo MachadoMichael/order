@@ -101,11 +101,3 @@ class ServiceClient:
                 time.sleep(settings.http_backoff_seconds * attempt)
 
         raise ServiceUnavailable(self.name, last_error)
-
-    def health(self) -> dict:
-        try:
-            response = self.request("GET", "/health")
-            return {"status": "up" if response.status_code == 200 else "degraded",
-                    "circuit": self.breaker.state}
-        except ServiceUnavailable:
-            return {"status": "down", "circuit": self.breaker.state}
